@@ -118,21 +118,6 @@ void cycleInit( bool loadBalance )
     MC_FASTTIMER_STOP(MC_Fast_Timer::cycleInit);
 }
 
-
-#if defined (HAVE_CUDA)
-
-__global__ void CycleTrackingKernel( MonteCarlo* monteCarlo, int num_particles, ParticleVault* processingVault, ParticleVault* processedVault )
-{
-   int global_index = getGlobalThreadID(); 
-
-    if( global_index < num_particles )
-    {
-        CycleTrackingGuts( monteCarlo, global_index, processingVault, processedVault );
-    }
-}
-
-#endif
-
 void cycleTracking(MonteCarlo *monteCarlo)
 {
     MC_FASTTIMER_START(MC_Fast_Timer::cycleTracking);
@@ -182,19 +167,7 @@ void cycleTracking(MonteCarlo *monteCarlo)
                     {
                       case gpuWithCUDA:
                        {
-                          #if defined (HAVE_CUDA)
-                          dim3 grid(1,1,1);
-                          dim3 block(1,1,1);
-                          int runKernel = ThreadBlockLayout( grid, block, numParticles);
-                          
-                          //Call Cycle Tracking Kernel
-                          if( runKernel )
-                             CycleTrackingKernel<<<grid, block >>>( monteCarlo, numParticles, processingVault, processedVault );
-                          
-                          //Synchronize the stream so that memory is copied back before we begin MPI section
-                          cudaPeekAtLastError();
-                          cudaDeviceSynchronize();
-                          #endif
+                           CycleTrackingKernelLaunch( monteCarlo, numParticles, processingVault, processedVault );
                        }
                        break;
                        
@@ -213,7 +186,7 @@ void cycleTracking(MonteCarlo *monteCarlo)
                           #endif
                           for ( int particle_index = 0; particle_index < numParticles; particle_index++ )
                           {
-                             CycleTrackingGuts( monteCarlo, particle_index, processingVault, processedVault );
+                            CycleTrackingFunctionLaunch( monteCarlo, numParticles, particle_index, processingVault, processedVault );
                           }
                           #ifdef HAVE_OPENMP_TARGET
                           #pragma omp target exit data map(from:monteCarlo[0:1])
@@ -227,7 +200,7 @@ void cycleTracking(MonteCarlo *monteCarlo)
                        #include "mc_omp_parallel_for_schedule_static.hh"
                        for ( int particle_index = 0; particle_index < numParticles; particle_index++ )
                        {
-                          CycleTrackingGuts( monteCarlo, particle_index, processingVault, processedVault );
+                            CycleTrackingFunctionLaunch( monteCarlo, numParticles, particle_index, processingVault, processedVault );
                        }
                        break;
                       default:

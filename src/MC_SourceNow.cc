@@ -65,8 +65,10 @@ void MC_SourceNow(MonteCarlo *monteCarlo)
     uint64_t vault_size       = monteCarlo->_particleVaultContainer->getVaultSize();
     uint64_t processing_index = monteCarlo->_particleVaultContainer->sizeProcessing() / vault_size;
 
-    uint64_t task_index = 0;
     uint64_t particle_count = 0;
+
+    uint64_t seedRandomSeed = num_particles;
+    rngSpawn_Random_Number_Seed(&seedRandomSeed);
 
     // Compute the partial sums on each mpi process.
     // uint64_t local_num_particles = (int)(local_weight_particles / source_particle_weight);
@@ -81,6 +83,8 @@ void MC_SourceNow(MonteCarlo *monteCarlo)
             double cell_weight_particles = cell._volume * source_rate[cell._material] * monteCarlo->time_info->time_step;
             double cell_num_particles_float = cell_weight_particles / source_particle_weight;
             int cell_num_particles = (int)cell_num_particles_float;
+            double cell_num_particles_diff = cell_num_particles_float - cell_num_particles;
+            cell_num_particles += ( cell_num_particles_diff > 0. ) ? ((rngSample(&seedRandomSeed) <= cell_num_particles_diff ) ? 1 : 0) : 0; 
 
             //Can Make this parallel - have an optimization from Leopold to add still
             for ( int particle_index = 0; particle_index < cell_num_particles; particle_index++ )
@@ -112,7 +116,6 @@ void MC_SourceNow(MonteCarlo *monteCarlo)
 
                 particle.domain = domain_index;
                 particle.cell   = cell_index;
-                particle.task   = task_index;
                 particle.weight = source_particle_weight;
 
                 double randomNumber = rngSample(&particle.random_number_seed);
@@ -127,7 +130,7 @@ void MC_SourceNow(MonteCarlo *monteCarlo)
 
                 particle_count++;
 
-                ATOMIC_UPDATE( monteCarlo->_tallies->_balanceTask[particle.task]._source);
+                ATOMIC_UPDATE( monteCarlo->_tallies->_balanceTask[0]._source);
             }
         }
     }

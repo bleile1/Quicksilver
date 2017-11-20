@@ -258,7 +258,6 @@ inline MC_Particle::MC_Particle()
      num_collisions (0),
      num_segments(0.0),
 
-     task(0),
      species(0),
      breed(0),
      energy_group(0),
@@ -297,7 +296,6 @@ inline MC_Particle::MC_Particle( const MC_Base_Particle &from_particle )
      num_segments(from_particle.num_segments),
 
 
-     task(0),
      species(from_particle.species),
      breed(from_particle.breed),
      energy_group(0),

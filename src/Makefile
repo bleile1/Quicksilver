@@ -186,7 +186,7 @@ LDFLAGS =
 #CXXFLAGS = -DHAVE_CUDA -std=c++11 $(OPTFLAGS) -Xptxas -v 
 #CXXFLAGS += -gencode=arch=compute_60,code=\"sm_60,compute_60\" 
 #CXXFLAGS += --compiler-bindir=$(HOST_COMPILER)
-#CPPFLAGS = -x cu -dc -DHAVE_MPI -DHAVE_ASYNC_MPI
+#CPPFLAGS = -x cu -dc -DHAVE_MPI -DHAVE_ASYNC_MPI #-DDO_COLLISION_SORT
 #LDFLAGS  = $(CUDA_LDFLAGS) 
 ##LDFLAGS += ${CUDA_PATH}/lib64/libnvToolsExt.so
 
