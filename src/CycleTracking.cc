@@ -38,6 +38,27 @@ void CycleTrackingGuts( MonteCarlo *monteCarlo, int particle_index, ParticleVaul
 }
 HOST_DEVICE_END
 
+#ifdef DO_COLLISION_SORT
+#ifdef __CUDA_ARCH__
+DEVICE
+inline void sortSwap( int* sIndex, MC_Segment_Outcome_type::Enum* sEvent, MC_Particle* sParts, int front, int back )
+{
+    int tIndex    = sIndex[front]; 
+    sIndex[front]  = sIndex[back];
+    sIndex[back] = tIndex;
+
+    MC_Segment_Outcome_type::Enum tEnum = sEvent[front]
+    sEvent[front]  = sEvent[back];
+    sEvent[back] = tEnum; 
+
+    MC_Particle temp = sParts[front];
+    sParts[front]  = sParts[back];
+    sParts[back] = temp;
+}
+DEVICE_END
+#endif
+#endif
+
 HOST_DEVICE
 void CycleTrackingFunction( MonteCarlo *monteCarlo, MC_Particle &mc_particle, int particle_index, ParticleVault* processingVault, ParticleVault* processedVault, int num_particles, int* sIndex, MC_Segment_Outcome_type::Enum* sEvent, MC_Particle* sParts)
 {
@@ -83,29 +104,36 @@ void CycleTrackingFunction( MonteCarlo *monteCarlo, MC_Particle &mc_particle, in
             int front = 0;
             //If the threads in this block would reach past num_particles set the back to be equivalent to num_particles for this block
             int back = ( (blockIdx.x+1)*blockDim.x > num_particles ) ? ( blockDim.x - (((blockIdx.x+1)*blockDim.x) - num_particles) - 1 ) : (blockDim.x-1);
+            int back_census = back; 
             while(front < back)
             {
-                if(sEvent[front] == MC_Segment_Outcome_type::Collision)
+                if( sEvent[back_census] == MC_Segment_Outcome_type::Census )    
+                {
+                    back_census--;
+                }
+                else if( sEvent[front]  == MC_Segment_Outcome_type::Collision ) 
                 {
                     front++;                
                 }
-                else if(sEvent[back] == MC_Segment_Outcome_type::Collision)
+                else if( sEvent[front]  == MC_Segment_Outcome_type::Census)     
                 {
-                    int tIndex    = sIndex[back]; 
-                    sIndex[back]  = sIndex[front];
-                    sIndex[front] = tIndex;
-                    sEvent[back]  = sEvent[front];
-                    sEvent[front] = MC_Segment_Outcome_type::Collision; 
-                    MC_Particle temp = sParts[back];
-                    sParts[back]  = sParts[front];
-                    sParts[front] = temp;
-
-                    front++;
+                    sortSwap( sIndex, sEvent, sParts, front, back_census );
+                    back_census--;
                 }
-                else
+                else if( sEvent[back]   == MC_Segment_Outcome_type::Collision)  
+                {
+                    sortSwap( sIndex, sEvent, sParts, front, back );
+                    front++;                
+                }
+                else if( sEvent[back]   == MC_Segment_Outcome_type::Census && back < back_census )                                
+                {
+                    sortSwap( sIndex, sEvent, sParts, back,  back_census );
+                    back_census--;
+                }
+                else                                                            
                 {
                     back--;
-                }                   
+                }
             }
         }
 
@@ -198,26 +226,19 @@ void CycleTrackingFunction( MonteCarlo *monteCarlo, MC_Particle &mc_particle, in
             int back = ( (blockIdx.x+1)*blockDim.x > num_particles ) ? ( blockDim.x - (((blockIdx.x+1)*blockDim.x) - num_particles) - 1 ) : (blockDim.x-1);
             while(front < back)
             {
-                if(sEvent[front] == MC_Segment_Outcome_type::Collision)
+                if(sEvent[front] == MC_Segment_Outcome_type::Collision)     
                 {
-                    front++;                
+                    front++;
                 }
-                else if(sEvent[back] == MC_Segment_Outcome_type::Collision)
+                else if(sEvent[back] == MC_Segment_Outcome_type::Collision) 
                 {
-                    int tIndex    = sIndex[back];               
-                    sIndex[back]  = sIndex[front];
-                    sIndex[front] = tIndex;
-                    sEvent[back]  = sEvent[front];
-                    sEvent[front] = MC_Segment_Outcome_type::Collision;              
-                    MC_Particle temp = sParts[back];
-                    sParts[back]  = sParts[front];
-                    sParts[front] = temp;
+                    sortSwap( sIndex, sEvent, sParts, front, back );
                     front++;
                 }
                 else
                 {
                     back--;
-                }                   
+                }
             }
         }
 
