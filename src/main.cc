@@ -29,7 +29,7 @@
 void gameOver();
 void cycleInit( bool loadBalance );
 void cycleTracking(MonteCarlo* monteCarlo);
-void cycleFinalize();
+void cycleFinalize( bool loadBalance );
 
 using namespace std;
 
@@ -56,7 +56,7 @@ int main(int argc, char** argv)
    {
       cycleInit( bool(loadBalance) );
       cycleTracking(mcco);
-      cycleFinalize();
+      cycleFinalize( bool(loadBalance) );
 
       mcco->fast_timer->Last_Cycle_Report(
             params.simulationParams.cycleTimers,
@@ -307,14 +307,14 @@ void cycleTracking(MonteCarlo *monteCarlo)
 }
 
 
-void cycleFinalize()
+void cycleFinalize( bool loadBalance )
 {
     MC_FASTTIMER_START(MC_Fast_Timer::cycleFinalize);
 
     mcco->_tallies->_balanceTask[0]._end = mcco->_particleVaultContainer->sizeProcessed();
 
     // Update the cumulative tally data.
-    mcco->_tallies->CycleFinalize(mcco); 
+    mcco->_tallies->CycleFinalize(mcco, loadBalance); 
 
     mcco->time_info->cycle++;
 

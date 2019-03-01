@@ -343,7 +343,7 @@ class Tallies
     void CycleInitialize(MonteCarlo* monteCarlo);
 
     void SumTasks();
-    void CycleFinalize(MonteCarlo *mcco);
+    void CycleFinalize(MonteCarlo *mcco, bool loadBalance);
     void PrintSummary(MonteCarlo *mcco);
 
     HOST_DEVICE_CUDA

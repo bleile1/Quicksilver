@@ -22,7 +22,7 @@ void Tallies::SumTasks(void)
    }
 }
 
-void Tallies::CycleFinalize(MonteCarlo *monteCarlo)
+void Tallies::CycleFinalize(MonteCarlo *monteCarlo, bool loadBalance )
 {
     SumTasks(); // sum the task level data down to index 0 at the end of each cycle
     
@@ -44,6 +44,14 @@ void Tallies::CycleFinalize(MonteCarlo *monteCarlo)
     vector<uint64_t> sum(tal.size());
 
     mpiAllreduce(&tal[0], &sum[0], tal.size(), MPI_UINT64_T, MPI_SUM, monteCarlo->processor_info->comm_mc_world);
+
+    if( loadBalance )
+    {
+        double localFOM = ((double) _balanceTask[0]._numSegments) / (MC_FASTTIMER_GET_LASTCYCLE(MC_Fast_Timer::cycleTracking_Kernel));
+        double totalFOMs = 0.0;
+        mpiAllreduce(&localFOM, &totalFOMs, 1, MPI_DOUBLE, MPI_SUM, monteCarlo->processor_info->comm_mc_shmcomm);
+        monteCarlo->processor_info->SetFactor( (localFOM / totalFOMs) );
+    }
 
     int index = 0;
     _balanceTask[0]._absorb = sum[index++];

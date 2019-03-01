@@ -23,42 +23,36 @@ void PopulationControl(MonteCarlo* monteCarlo, bool loadBalance)
 
     uint64_t targetNumParticles = monteCarlo->_params.simulationParams.nParticles;
     uint64_t globalNumParticles = 0;
-    uint64_t localNumParticles = monteCarlo->_particleVaultContainer->sizeProcessing();
+    uint64_t numParticles = monteCarlo->_particleVaultContainer->sizeProcessing();
    
-    if (loadBalance)
-    {
-        // If we are parallel, we will have one domain per mpi processs.  The targetNumParticles is across
-        // all MPI processes, so we need to divide by the number or ranks to get the per-mpi-process number targetNumParticles
-        targetNumParticles = ceil((double)targetNumParticles / (double)mcco->processor_info->num_processors );
-
-        //NO LONGER SPLITING VAULTS BY THREADS
-//        // If we are threaded, targetNumParticles should be divided by the number of threads (tasks) to balance
-//        // the particles across the thread level vaults.
-//        targetNumParticles = ceil((double)targetNumParticles / (double)mcco->processor_info->num_tasks);
-    }
-    else
-    {
-        mpiAllreduce(&localNumParticles, &globalNumParticles, 1, MPI_UINT64_T, MPI_SUM, MPI_COMM_WORLD);
-    }
+    //Count number of particles globally
+    mpiAllreduce(&numParticles, &globalNumParticles, 1, MPI_UINT64_T, MPI_SUM, MPI_COMM_WORLD);
      
+    //Tallies to track population changes
     Balance & taskBalance = monteCarlo->_tallies->_balanceTask[0];
 
-    double splitRRFactor = 1.0;
-    if (loadBalance)
-    {
-        int currentNumParticles = localNumParticles;
-        if (currentNumParticles != 0)
-            splitRRFactor = (double)targetNumParticles / (double)currentNumParticles;
-        else
-            splitRRFactor = 1.0;
-    }
-    else
-    {
-        splitRRFactor = (double)targetNumParticles / (double)globalNumParticles;
-    }
+    double splitRRFactor = (double)targetNumParticles / (double)globalNumParticles;
 
-    if (splitRRFactor != 1.0)  // no need to split if population is already correct.
-        PopulationControlGuts(splitRRFactor, localNumParticles, monteCarlo->_particleVaultContainer, taskBalance);
+    if (targetNumParticles == globalNumParticles)  // no need to split if population is already correct.
+        PopulationControlGuts(splitRRFactor, numParticles, monteCarlo->_particleVaultContainer, taskBalance);
+
+
+    if( loadBalance )
+    {
+        uint64_t localNumParticles = 0;
+        int localNumRanks = monteCarlo->processor_info->shm_num_processors;
+        double factor     = monteCarlo->processor_info->shm_perf_factor; 
+        mpiAllreduce(&numParticles, &localNumParticles, 1, MPI_UINT64_T, MPI_SUM, monteCarlo->processor_info->comm_mc_shmcomm);
+        targetNumParticles = (uint64_t) (( (double) localNumParticles / (double) localNumRanks ) * factor);
+        splitRRFactor = (double) targetNumParticles / (double) localNumParticles;
+
+        printf("LOAD-BALANCE[%d]: localNumParticles: %lu\t localNumRanks: %d\t factor: %g\n targetNumParticles: %lu \t splitRRFactor: %g\n",
+               monteCarlo->processor_info->shm_rank, localNumParticles, localNumRanks, factor, targetNumParticles, splitRRFactor );
+            
+
+        if (targetNumParticles == localNumParticles) //Do a second splitRR to loadBalance ranks pased on a performance factor  
+            PopulationControlGuts(splitRRFactor, numParticles, monteCarlo->_particleVaultContainer, taskBalance);
+    }
 
     monteCarlo->_particleVaultContainer->collapseProcessing();
 
