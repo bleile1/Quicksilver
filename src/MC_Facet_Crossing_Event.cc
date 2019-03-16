@@ -22,7 +22,7 @@
 
 HOST_DEVICE
 
-MC_Tally_Event::Enum MC_Facet_Crossing_Event(MC_Particle &mc_particle, MonteCarlo* monteCarlo, int particle_index, ParticleVault* processingVault)
+MC_Tally_Event::Enum MC_Facet_Crossing_Event(MC_Particle &mc_particle, MonteCarlo* monteCarlo, int particle_index, ParticleVault* processingVault, const unsigned int stream)
 {
     MC_Location location = mc_particle.Get_Location();
 
@@ -62,7 +62,7 @@ MC_Tally_Event::Enum MC_Facet_Crossing_Event(MC_Particle &mc_particle, MonteCarl
         processingVault->putParticle( mc_particle, particle_index );
 
         //Push neighbor rank and mc_particle onto the send queue
-        monteCarlo->_particleVaultContainer->getSendQueue()->push( neighbor_rank, particle_index );
+        monteCarlo->_particleVaultContainer->getSendQueue(stream)->push( neighbor_rank, particle_index );
 
     }
 

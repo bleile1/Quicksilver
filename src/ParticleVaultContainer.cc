@@ -19,7 +19,8 @@ ParticleVaultContainer( uint64_t vault_size,
   _extraVaultIndex( 0                ),
   _processingVault( num_vaults       ),
   _processedVault ( num_vaults       ),
-  _extraVault     ( num_extra_vaults, VAR_MEM )
+  _extraVault     ( 2*num_extra_vaults, VAR_MEM ),
+  _sendQueue      ( 2, VAR_MEM)
 {
 
     //Allocate and reserve space for particles for each vault
@@ -38,7 +39,7 @@ ParticleVaultContainer( uint64_t vault_size,
 
     //Allocate and reserve space for particles for each extra vault
     for( uint64_t e_vault = 0; 
-                  e_vault < num_extra_vaults; 
+                  e_vault < 2*num_extra_vaults; 
                   e_vault++ )
     {
         //Allocate Extra Vault
@@ -47,8 +48,10 @@ ParticleVaultContainer( uint64_t vault_size,
         _extraVault[e_vault]->reserve( vault_size );
     }
 
-    _sendQueue = MemoryControl::allocate<SendQueue>(1 ,VAR_MEM);
-    _sendQueue->reserve( vault_size );
+    _sendQueue[0] = MemoryControl::allocate<SendQueue>(1 ,VAR_MEM);
+    _sendQueue[0]->reserve( vault_size );
+    _sendQueue[1] = MemoryControl::allocate<SendQueue>(1 ,VAR_MEM);
+    _sendQueue[1]->reserve( vault_size );
 }
 
 //--------------------------------------------------------------
@@ -71,7 +74,8 @@ ParticleVaultContainer::
     {
         MemoryControl::deallocate(_extraVault[ii], 1, VAR_MEM);
     }
-    MemoryControl::deallocate( _sendQueue, 1, VAR_MEM );
+    MemoryControl::deallocate( _sendQueue[0], 1, VAR_MEM );
+    MemoryControl::deallocate( _sendQueue[1], 1, VAR_MEM );
 }
 
 //--------------------------------------------------------------
@@ -109,7 +113,7 @@ getTaskProcessedVault(uint64_t vaultIndex)
 //--------------------------------------------------------------
 
 uint64_t ParticleVaultContainer::
-getFirstEmptyProcessedVault()
+getFirstEmptyProcessedVault(int num_needed_vaults)
 {
     uint64_t index = 0;
 
@@ -124,6 +128,13 @@ getFirstEmptyProcessedVault()
         }
     }
 
+    while(_processedVault.size()-index < num_needed_vaults)
+    {
+        ParticleVault* vault = MemoryControl::allocate<ParticleVault>(1,VAR_MEM);
+        vault->reserve( _vaultSize );
+        this->_processedVault.push_back(vault);
+    }
+
     return index;
 }
 
@@ -133,9 +144,9 @@ getFirstEmptyProcessedVault()
 //--------------------------------------------------------------
 HOST_DEVICE
 SendQueue* ParticleVaultContainer::
-getSendQueue()
+getSendQueue(const unsigned int stream)
 {
-    return this->_sendQueue;
+    return this->_sendQueue[stream];
 }
 HOST_DEVICE_END
 
@@ -188,6 +199,16 @@ sizeExtra()
     return sum_size;
 }
 
+uint64_t ParticleVaultContainer::
+sizeExtra(const unsigned int stream)
+{
+    uint64_t sum_size = 0;
+    for( uint64_t vault = stream*_numExtraVaults; vault < (1+stream)*_numExtraVaults; vault++ )
+    {
+        sum_size += _extraVault[vault]->size();
+    }
+    return sum_size;
+}
 //--------------------------------------------------------------
 //------------collapseProcessing--------------------------------
 //Collapses the particles in the processing vault down to the
@@ -339,11 +360,11 @@ addProcessingParticle( MC_Base_Particle &particle, uint64_t &fill_vault_index )
 //--------------------------------------------------------------
 HOST_DEVICE
 void ParticleVaultContainer::
-addExtraParticle( MC_Particle &particle)
+addExtraParticle( MC_Particle &particle, const unsigned int stream)
 {
     uint64_cu index = 0;
     ATOMIC_CAPTURE( this->_extraVaultIndex, 1, index ); 
-    uint64_t vault = index / this->_vaultSize;
+    uint64_t vault = (index / this->_vaultSize) + stream*_numExtraVaults;
     _extraVault[vault]->pushParticle( particle );
 }
 HOST_DEVICE_END
@@ -355,9 +376,9 @@ HOST_DEVICE_END
 //--------------------------------------------------------------
 
 void ParticleVaultContainer::
-cleanExtraVaults()
+cleanExtraVaults( const unsigned int stream, const unsigned int ignore_vault )
 {
-    uint64_t size_extra = this->sizeExtra();
+    uint64_t size_extra = this->sizeExtra(stream);
     if( size_extra > 0 )
     {
         uint64_t num_extra  = (size_extra / this->_vaultSize) + ((size_extra%this->_vaultSize == 0) ? 0 : 1);
@@ -371,6 +392,10 @@ cleanExtraVaults()
             if( this->_extraVault[extra_index]->size() == 0 )
             {
                 extra_index++;
+            }
+            else if( processing_index == ignore_vault )
+            {
+                processing_index++;
             }
             else
             {

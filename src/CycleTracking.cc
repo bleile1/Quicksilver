@@ -12,7 +12,7 @@
 #include "qs_assert.hh"
 
 HOST_DEVICE
-void CycleTrackingGuts( MonteCarlo *monteCarlo, int particle_index, ParticleVault *processingVault, ParticleVault *processedVault )
+void CycleTrackingGuts( MonteCarlo *monteCarlo, int particle_index, ParticleVault *processingVault, ParticleVault *processedVault, const unsigned int stream )
 {
     MC_Particle mc_particle;
 
@@ -23,7 +23,7 @@ void CycleTrackingGuts( MonteCarlo *monteCarlo, int particle_index, ParticleVaul
     mc_particle.task = 0;//processed_vault;
 
     // loop over this particle until we cannot do anything more with it on this processor
-    CycleTrackingFunction( monteCarlo, mc_particle, particle_index, processingVault, processedVault );
+    CycleTrackingFunction( monteCarlo, mc_particle, particle_index, processingVault, processedVault, stream );
 
     //Make sure this particle is marked as completed
     processingVault->invalidateParticle( particle_index );
@@ -31,7 +31,7 @@ void CycleTrackingGuts( MonteCarlo *monteCarlo, int particle_index, ParticleVaul
 HOST_DEVICE_END
 
 HOST_DEVICE
-void CycleTrackingFunction( MonteCarlo *monteCarlo, MC_Particle &mc_particle, int particle_index, ParticleVault* processingVault, ParticleVault* processedVault)
+void CycleTrackingFunction( MonteCarlo *monteCarlo, MC_Particle &mc_particle, int particle_index, ParticleVault* processingVault, ParticleVault* processedVault, const unsigned int stream)
 {
     bool keepTrackingThisParticle = false;
     unsigned int tally_index =      (particle_index) % monteCarlo->_tallies->GetNumBalanceReplications();
@@ -60,7 +60,7 @@ void CycleTrackingFunction( MonteCarlo *monteCarlo, MC_Particle &mc_particle, in
             // The particle undergoes a collision event producing:
             //   (0) Other-than-one same-species secondary particle, or
             //   (1) Exactly one same-species secondary particle.
-            if (CollisionEvent(monteCarlo, mc_particle, tally_index ) == MC_Collision_Event_Return::Continue_Tracking)
+            if (CollisionEvent(monteCarlo, mc_particle, tally_index, stream ) == MC_Collision_Event_Return::Continue_Tracking)
             {
                 keepTrackingThisParticle = true;
             }
@@ -74,7 +74,7 @@ void CycleTrackingFunction( MonteCarlo *monteCarlo, MC_Particle &mc_particle, in
         case MC_Segment_Outcome_type::Facet_Crossing:
             {
                 // The particle has reached a cell facet.
-                MC_Tally_Event::Enum facet_crossing_type = MC_Facet_Crossing_Event(mc_particle, monteCarlo, particle_index, processingVault);
+                MC_Tally_Event::Enum facet_crossing_type = MC_Facet_Crossing_Event(mc_particle, monteCarlo, particle_index, processingVault, stream);
 
                 if (facet_crossing_type == MC_Tally_Event::Facet_Crossing_Transit_Exit)
                 {

@@ -49,11 +49,11 @@ class ParticleVaultContainer
     ParticleVault* getTaskProcessedVault( uint64_t vaultIndex);
 
     //Returns the index to the first empty Processed Vault
-    uint64_t getFirstEmptyProcessedVault();
+    uint64_t getFirstEmptyProcessedVault(int num_needed_vaults);
 
     //Returns a pointer to the Send Queue
     HOST_DEVICE
-    SendQueue* getSendQueue();
+    SendQueue* getSendQueue(const unsigned int stream);
     HOST_DEVICE_END
 
     //Counts Particles in all vaults
@@ -75,12 +75,12 @@ class ParticleVaultContainer
     void addProcessingParticle( MC_Base_Particle &particle, uint64_t &fill_vault_index );
     //Adds a particle to the extra particle vault
     HOST_DEVICE
-    void addExtraParticle( MC_Particle &particle );
+    void addExtraParticle( MC_Particle &particle, const unsigned int stream );
     HOST_DEVICE_END
  
     //Pushes particles from Extra Vaults onto the Processing 
     //Vault list
-    void cleanExtraVaults();
+    void cleanExtraVaults( const unsigned int stream, const unsigned int ignore_vault);
 
   private:
     
@@ -98,7 +98,7 @@ class ParticleVaultContainer
 
     //The send queue - stores particle index and neighbor index 
     //for any particles that hit (TRANSIT_OFF_PROCESSOR) 
-    SendQueue *_sendQueue;
+    qs_vector<SendQueue*> _sendQueue;
 
     //The list of active particle vaults (size - grow-able)
     std::vector<ParticleVault*> _processingVault;

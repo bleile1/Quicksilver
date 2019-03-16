@@ -47,7 +47,7 @@ HOST_DEVICE_END
 
 HOST_DEVICE
 
-bool CollisionEvent(MonteCarlo* monteCarlo, MC_Particle &mc_particle, unsigned int tally_index)
+bool CollisionEvent(MonteCarlo* monteCarlo, MC_Particle &mc_particle, unsigned int tally_index, const unsigned int stream)
 {
    const MC_Cell_State &cell = monteCarlo->domain[mc_particle.domain].cell_state[mc_particle.cell];
 
@@ -129,7 +129,7 @@ bool CollisionEvent(MonteCarlo* monteCarlo, MC_Particle &mc_particle, unsigned i
         secondaryParticle.random_number_seed = rngSpawn_Random_Number_Seed(&mc_particle.random_number_seed);
         secondaryParticle.identifier = secondaryParticle.random_number_seed;
         updateTrajectory( energyOut[secondaryIndex], angleOut[secondaryIndex], secondaryParticle );
-        monteCarlo->_particleVaultContainer->addExtraParticle(secondaryParticle);
+        monteCarlo->_particleVaultContainer->addExtraParticle(secondaryParticle, stream);
    }
 
    updateTrajectory( energyOut[0], angleOut[0], mc_particle);
@@ -139,7 +139,7 @@ bool CollisionEvent(MonteCarlo* monteCarlo, MC_Particle &mc_particle, unsigned i
    // possibility of a particle doing multiple fission reactions in a single
    // kernel invocation and overflowing the extra storage with secondary particles.
    if ( nOut > 1 ) 
-       monteCarlo->_particleVaultContainer->addExtraParticle(mc_particle);
+       monteCarlo->_particleVaultContainer->addExtraParticle(mc_particle, stream);
 
    //If we are still tracking this particle the update its energy group
    mc_particle.energy_group = monteCarlo->_nuclearData->getEnergyGroup(mc_particle.kinetic_energy);

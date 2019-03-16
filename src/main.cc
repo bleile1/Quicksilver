@@ -123,17 +123,22 @@ void cycleInit( bool loadBalance )
 
 #if defined (HAVE_CUDA)
 
-__global__ void CycleTrackingKernel( MonteCarlo* monteCarlo, int num_particles, ParticleVault* processingVault, ParticleVault* processedVault )
+__global__ void CycleTrackingKernel( MonteCarlo* monteCarlo, int num_particles, ParticleVault* processingVault, ParticleVault* processedVault, const unsigned int stream )
 {
    int global_index = getGlobalThreadID(); 
 
     if( global_index < num_particles )
     {
-        CycleTrackingGuts( monteCarlo, global_index, processingVault, processedVault );
+        CycleTrackingGuts( monteCarlo, global_index, processingVault, processedVault, stream );
     }
 }
 
 #endif
+
+inline unsigned int inverseStream( unsigned int stream )
+{
+    return (stream == 0) 1 : 0;
+}
 
 void cycleTracking(MonteCarlo *monteCarlo)
 {
@@ -152,101 +157,65 @@ void cycleTracking(MonteCarlo *monteCarlo)
     //Get Test For Done Method (Blocking or non-blocking
     MC_New_Test_Done_Method::Enum new_test_done_method = monteCarlo->particle_buffer->new_test_done_method;
 
+    //Setting up Cuda Streams for Asynchronous Kernel Dispatching (2 Steam Mode) CUDA ONLY
+    const int num_streams = 2;
+    cudaStream_t streams[num_streams];
+    cudaStreamCreate(&streams[0]);
+    cudaStreamCreate(&streams[1]);
+    unsigned int STREAM = 0;
+
     do
     {
-        int particle_count = 0; // Initialize count of num_particles processed
-
         while ( !done )
         {
             uint64_t fill_vault = 0;
 
-            for ( uint64_t processing_vault = 0; processing_vault < my_particle_vault.processingSize(); processing_vault++ )
-            {
-                MC_FASTTIMER_START(MC_Fast_Timer::cycleTracking_Kernel);
-                uint64_t processed_vault = my_particle_vault.getFirstEmptyProcessedVault();
+	        uint64_t num_vaults = my_particle_vault.size();
+	        if( num_vaults < 2)
+	        {
+                fprintf(stderr, "This Code is only set to run with 2 or more vaults: num_vaults = %lu\n", num_vaults);    
+                MPI_Abort(MPI_COMM_WORLD, -1);
+            }
+            ParticleVault* processingVaults[num_streams];
+            ParticleVault* processedVaults[num_streams];
+            uint64_t processing_vault = 0;
+            uint64_t processing_vaults[2];
+            uint64_t processed_vault = my_particle_vault.getFirstEmptyProcessedVault(num_vaults);
 
-                ParticleVault *processingVault = my_particle_vault.getTaskProcessingVault(processing_vault);
-                ParticleVault *processedVault =  my_particle_vault.getTaskProcessedVault(processed_vault);
-            
-                int numParticles = processingVault->size();
-            
+            //Initialize First vaults for 2 stream algorithm
+            processingVaults[0] = my_particle_vault.getTaskProcessingVault(processing_vault); 
+            processing_vaults[0]= processing_vault++;
+            processingVaults[1] = my_particle_vault.getTaskProcessingVault(processing_vault++);
+            processing_vaults[1]= processing_vault++;
+            processedVaults[0]  = my_particle_vault.getTaskProcessingVault(processed_vault+processing_vaults[0]);
+            processedVaults[1]  = my_particle_vault.getTaskProcessingVault(processed_vault+processing_vaults[1]);
+
+            //Perform Initial Kernel Launches for 2 stream algorithm
+            for( int stream = 0; stream < num_streams; stream++ )
+            {
+                int numParticles = processingVaults[stream]->size();
                 if ( numParticles != 0 )
                 {
-                    NVTX_Range trackingKernel("cycleTracking_TrackingKernel"); // range ends at end of scope
+                    dim3 grid(1,1,1);
+                    dim3 block(1,1,1);
+                    int runKernel = ThreadBlockLayout( grid, block, numParticles);
 
-                    // The tracking kernel can run
-                    // * As a cuda kernel
-                    // * As an OpenMP 4.5 parallel loop on the GPU
-                    // * As an OpenMP 3.0 parallel loop on the CPU
-                    // * AS a single thread on the CPU.
-                    switch (execPolicy)
-                    {
-                      case gpuWithCUDA:
-                       {
-                          #if defined (HAVE_CUDA)
-                          dim3 grid(1,1,1);
-                          dim3 block(1,1,1);
-                          int runKernel = ThreadBlockLayout( grid, block, numParticles);
-                          
-                          //Call Cycle Tracking Kernel
-                          if( runKernel )
-                             CycleTrackingKernel<<<grid, block >>>( monteCarlo, numParticles, processingVault, processedVault );
-                          
-                          //Synchronize the stream so that memory is copied back before we begin MPI section
-                          cudaPeekAtLastError();
-                          cudaDeviceSynchronize();
-                          #endif
-                       }
-                       break;
-                       
-                      case gpuWithOpenMP:
-                       {
-                          int nthreads=128;
-                          if (numParticles <  64*56 ) 
-                             nthreads = 64;
-                          int nteams = (numParticles + nthreads - 1 ) / nthreads;
-                          nteams = nteams > 1 ? nteams : 1;
-                          #ifdef HAVE_OPENMP_TARGET
-                          #pragma omp target enter data map(to:monteCarlo[0:1]) 
-                          #pragma omp target enter data map(to:processingVault[0:1]) 
-                          #pragma omp target enter data map(to:processedVault[0:1])
-                          #pragma omp target teams distribute parallel for num_teams(nteams) thread_limit(128)
-                          #endif
-                          for ( int particle_index = 0; particle_index < numParticles; particle_index++ )
-                          {
-                             CycleTrackingGuts( monteCarlo, particle_index, processingVault, processedVault );
-                          }
-                          #ifdef HAVE_OPENMP_TARGET
-                          #pragma omp target exit data map(from:monteCarlo[0:1])
-                          #pragma omp target exit data map(from:processingVault[0:1])
-                          #pragma omp target exit data map(from:processedVault[0:1])
-                          #endif
-                       }
-                       break;
-
-                      case cpu:
-                       #include "mc_omp_parallel_for_schedule_static.hh"
-                       for ( int particle_index = 0; particle_index < numParticles; particle_index++ )
-                       {
-                          CycleTrackingGuts( monteCarlo, particle_index, processingVault, processedVault );
-                       }
-                       break;
-                      default:
-                       qs_assert(false);
-                    } // end switch
+                    //Call Cycle Tracking Kernel
+                    if( runKernel )
+                        CycleTrackingKernel<<<grid, block, streams[stream] >>>( monteCarlo, numParticles, 
+                                processingVault[stream], processedVault[stream], stream);
                 }
+            }
 
-                particle_count += numParticles;
+            //Untill Both Streams are at or past num_vaults
+            int done_count = 0;
+            do
+            {
+                //Wait for execution on this stream to complete
+                cudaStreamSynchronize(STREAM);
 
-                MC_FASTTIMER_STOP(MC_Fast_Timer::cycleTracking_Kernel);
-
-                MC_FASTTIMER_START(MC_Fast_Timer::cycleTracking_MPI);
-
-                // Next, communicate particles that have crossed onto
-                // other MPI ranks.
-                NVTX_Range cleanAndComm("cycleTracking_clean_and_comm");
-                
-                SendQueue &sendQueue = *(my_particle_vault.getSendQueue());
+                //Do MPI for particles in this stream
+                SendQueue &sendQueue = *(my_particle_vault.getSendQueue(STREAM));
                 monteCarlo->particle_buffer->Allocate_Send_Buffer( sendQueue );
 
                 //Move particles from send queue to the send buffers
@@ -255,7 +224,7 @@ void cycleTracking(MonteCarlo *monteCarlo)
                     sendQueueTuple& sendQueueT = sendQueue.getTuple( index );
                     MC_Base_Particle mcb_particle;
 
-                    processingVault->getBaseParticleComm( mcb_particle, sendQueueT._particleIndex );
+                    processingVault[STREAM]->getBaseParticleComm( mcb_particle, sendQueueT._particleIndex );
 
                     int buffer = monteCarlo->particle_buffer->Choose_Buffer(sendQueueT._neighbor );
                     monteCarlo->particle_buffer->Buffer_Particle(mcb_particle, buffer );
@@ -263,33 +232,52 @@ void cycleTracking(MonteCarlo *monteCarlo)
 
                 monteCarlo->particle_buffer->Send_Particle_Buffers(); // post MPI sends
 
-                processingVault->clear(); //remove the invalid particles
+                //reset size to 0 all data can now be safely overwritten
+                processingVault[STREAM]->clear(); 
                 sendQueue.clear();
 
-                // Move particles in "extra" vaults into the regular vaults.
-                my_particle_vault.cleanExtraVaults();
+                // Move particles in "extra" vaults into the regular vaults. 
+                //  Ignoring the other streams active vault
+                my_particle_vault.cleanExtraVaults(STREAM, processing_vaults[inverseStream( STREAM)] );
 
                 // receive any particles that have arrived from other ranks
                 monteCarlo->particle_buffer->Receive_Particle_Buffers( fill_vault );
 
-                MC_FASTTIMER_STOP(MC_Fast_Timer::cycleTracking_MPI);
+                if( processing_vault < num_vaults )
+                {
+                    processingVaults[STREAM] = my_particle_vault.getTaskProcessingVault(processing_vault); 
+                    processing_vaults[STREAM]= processing_vault++;
+                    processedVaults[STREAM]  = my_particle_vault.getTaskProcessingVault(processed_vault+processing_vaults[STREAM]);
 
-            } // for loop on vaults
+                    numParticles = processingVaults[STREAM]->size();
+                    if ( numParticles != 0 )
+	                {
+                        dim3 grid(1,1,1);
+                        dim3 block(1,1,1);
+                        int runKernel = ThreadBlockLayout( grid, block, numParticles);
+                    
+                        //Call Cycle Tracking Kernel
+                        if( runKernel )
+                           CycleTrackingKernel<<<grid, block, streams[STREAM] >>>( monteCarlo, numParticles, 
+                                   processingVault[STREAM], processedVault[STREAM], STREAM );
 
-            MC_FASTTIMER_START(MC_Fast_Timer::cycleTracking_MPI);
+                    }
+                }
+                else
+                {
+                    done_count++;
+                }
+                //Swap Streams to work on
+                STREAM = inverseStream(STREAM);
 
-            NVTX_Range collapseRange("cycleTracking_Collapse_ProcessingandProcessed");
+            } while( done_count >= num_streams );
+
             my_particle_vault.collapseProcessing();
             my_particle_vault.collapseProcessed();
-            collapseRange.endRange();
 
 
             //Test for done - blocking on all MPI ranks
-            NVTX_Range doneRange("cycleTracking_Test_Done_New");
             done = monteCarlo->particle_buffer->Test_Done_New( new_test_done_method );
-            doneRange.endRange();
-
-            MC_FASTTIMER_STOP(MC_Fast_Timer::cycleTracking_MPI);
 
         } // while not done: Test_Done_New()
 
