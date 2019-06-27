@@ -467,6 +467,11 @@ void MC_Particle_Buffer::Send_Particle_Buffers( )
 {
     for( int buffer_index = 0; buffer_index < this->num_buffers; buffer_index++ )
     {
+		if(loadBalance)
+		{
+			//Rescale Send Buffers based on neighbors performance characteristics
+			Scale_Particle_Buffer( buffer_index );
+		}
         Send_Particle_Buffer( buffer_index );
     }
 }
